@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "OrderEventDemo",
+  "namespace": "com.example.kafka.avro.demo",
+  "doc": "Évolution INVALIDE sous FORWARD : ajout d'un champ obligatoire sans valeur par défaut",
+  "fields": [
+    { "name": "orderId", "type": "string" },
+    { "name": "customerId", "type": "string" },
+    { "name": "totalAmount", "type": "double" },
+    { "name": "currency", "type": "string", "default": "EUR" },
+    { "name": "trackingNumber", "type": "string", "doc": "CHAMP SANS DÉFAUT : Un nouveau reader ne pourra pas lire les anciens messages sans trackingNumber !" }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "NotificationEvent",
+  "namespace": "com.example.kafka.avro",
+  "doc": "Événement de notification client",
+  "fields": [
+    { "name": "eventId", "type": "string", "doc": "UUID unique de l'événement" },
+    { "name": "eventType", "type": "string", "doc": "Type d'événement de notification" },
+    { "name": "occurredAt", "type": "long", "doc": "Timestamp epoch millisecondes" },
+    { "name": "aggregateId", "type": "string", "doc": "Identifiant de l'agrégat lié" },
+    { "name": "recipient", "type": "string", "doc": "Destinataire (email ou téléphone)" },
+    { "name": "channel", "type": "string", "doc": "Canal de diffusion (EMAIL, SMS, PUSH)" },
+    { "name": "subject", "type": "string", "doc": "Sujet de la notification" },
+    { "name": "message", "type": "string", "doc": "Corps du message de notification" }
+  ]
+}

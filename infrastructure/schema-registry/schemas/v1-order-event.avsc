@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "OrderEventDemo",
+  "namespace": "com.example.kafka.avro.demo",
+  "doc": "Version 1 - Schéma initial pour la démonstration FORWARD_TRANSITIVE",
+  "fields": [
+    { "name": "orderId", "type": "string" },
+    { "name": "customerId", "type": "string" },
+    { "name": "totalAmount", "type": "double" }
+  ]
+}

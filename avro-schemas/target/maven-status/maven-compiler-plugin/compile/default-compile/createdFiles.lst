@@ -1,0 +1,8 @@
+com/example/kafka/avro/OrderItem$Builder.class
+com/example/kafka/avro/NotificationEvent.class
+com/example/kafka/avro/OrderItem.class
+com/example/kafka/avro/NotificationEvent$Builder.class
+com/example/kafka/avro/InventoryResultEvent.class
+com/example/kafka/avro/OrderEvent.class
+com/example/kafka/avro/InventoryResultEvent$Builder.class
+com/example/kafka/avro/OrderEvent$Builder.class

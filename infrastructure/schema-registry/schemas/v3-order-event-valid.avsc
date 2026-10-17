@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "OrderEventDemo",
+  "namespace": "com.example.kafka.avro.demo",
+  "doc": "Version 3 (Valide) - Ajout de status avec défaut, compatible FORWARD_TRANSITIVE avec v2 et v1",
+  "fields": [
+    { "name": "orderId", "type": "string" },
+    { "name": "customerId", "type": "string" },
+    { "name": "totalAmount", "type": "double" },
+    { "name": "currency", "type": "string", "default": "EUR" },
+    { "name": "status", "type": "string", "default": "PENDING" }
+  ]
+}

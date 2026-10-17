@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "InventoryResultEvent",
+  "namespace": "com.example.kafka.avro",
+  "doc": "Résultat de réservation ou d'échec de stock",
+  "fields": [
+    { "name": "eventId", "type": "string", "doc": "UUID unique de l'événement" },
+    { "name": "eventType", "type": "string", "doc": "Type d'événement (INVENTORY_RESERVED, INVENTORY_FAILED)" },
+    { "name": "occurredAt", "type": "long", "doc": "Timestamp epoch millisecondes" },
+    { "name": "aggregateId", "type": "string", "doc": "Identifiant de l'agrégat (orderId)" },
+    { "name": "orderId", "type": "string", "doc": "Identifiant de la commande concernée" },
+    { "name": "success", "type": "boolean", "doc": "Indique si la réservation a réussi" },
+    { "name": "reason", "type": ["null", "string"], "default": null, "doc": "Motif en cas de refus" }
+  ]
+}
