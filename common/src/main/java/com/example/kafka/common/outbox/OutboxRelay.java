@@ -46,7 +46,7 @@ public class OutboxRelay {
     public void publishPending() {
         // fixedDelay already prevents overlap within this instance; the lock prevents it across instances,
         // so batches never interleave and per-key order holds cluster-wide.
-        if (repository.tryLockRelay().isEmpty()) {
+        if (!repository.tryLockRelay()) {
             log.debug("Another relay is publishing, skipping this run");
             return;
         }

@@ -210,7 +210,7 @@ flowchart TD
 
 **Never lost, never phantom, maybe duplicated → consumers are idempotent.**
 
-Code: [OutboxWriter](common/src/main/java/com/example/kafka/common/outbox/OutboxWriter.java) (`MANDATORY`: must join the business transaction) · [OutboxRelay](common/src/main/java/com/example/kafka/common/outbox/OutboxRelay.java) (runs never overlap: each run first takes the one-row `outbox_relay_lock`, and if another instance holds it the run is skipped). Watch it: stop Kafka, create orders, see `GET /api/orders/outbox/pending` fill up; restart Kafka and it drains.
+Code: [OutboxWriter](common/src/main/java/com/example/kafka/common/outbox/OutboxWriter.java) (`MANDATORY`: must join the business transaction) · [OutboxRelay](common/src/main/java/com/example/kafka/common/outbox/OutboxRelay.java) (runs never overlap: each run first takes a PostgreSQL advisory lock, `pg_try_advisory_xact_lock`, and if another instance holds it the run is skipped). Watch it: stop Kafka, create orders, see `GET /api/orders/outbox/pending` fill up; restart Kafka and it drains.
 
 ## Idempotent consumers
 
@@ -253,7 +253,7 @@ make up     # everything in containers
 make demo   # end-to-end scenarios
 make logs
 make down   # reset everything
-make test   # no Docker needed
+make test   # starts the compose PostgreSQL; tests use the *_test databases
 ```
 
 | Demo | Result |

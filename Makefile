@@ -23,7 +23,8 @@ logs: ## Follow the services' logs
 build: ## Build all modules
 	mvn -B install -DskipTests
 
-test: ## Run the test suite (embedded Kafka + H2, no Docker needed)
+test: ## Run the test suite (embedded Kafka + the compose PostgreSQL, *_test databases)
+	$(COMPOSE) up -d --wait postgres
 	mvn -B verify
 
 demo: ## Run the end-to-end scenarios against running services

@@ -6,16 +6,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
-import java.util.Optional;
 
 public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Long> {
 
     /**
-     * Tries to take the relay mutex for the current transaction. Empty if another relay holds it;
-     * released on commit or rollback.
+     * Tries to take the relay mutex (a PostgreSQL advisory lock, scoped to this service's database).
+     * False if another relay holds it; released automatically on commit or rollback.
      */
-    @Query(value = "SELECT id FROM outbox_relay_lock WHERE id = 1 FOR UPDATE SKIP LOCKED", nativeQuery = true)
-    Optional<Integer> tryLockRelay();
+    @Query(value = "SELECT pg_try_advisory_xact_lock(hashtext('outbox_relay'))", nativeQuery = true)
+    boolean tryLockRelay();
 
     /**
      * Locks the oldest pending rows. SKIP LOCKED lets several service instances relay in parallel

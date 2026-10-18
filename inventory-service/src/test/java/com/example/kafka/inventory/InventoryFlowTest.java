@@ -15,7 +15,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -33,15 +36,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
         "spring.kafka.properties.schema.registry.url=mock://it",
-        "spring.datasource.url=jdbc:h2:mem:inventory;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
+        "app.database=inventory_test",
+        "spring.flyway.clean-disabled=false",
         "app.outbox.poll-interval-ms=100"
 })
 @EmbeddedKafka(partitions = 1, topics = {KafkaTopics.ORDERS_EVENTS, KafkaTopics.INVENTORY_EVENTS,
         "orders.events-dlt", "inventory.events-dlt"},
         brokerProperties = "auto.create.topics.enable=false")
 class InventoryFlowTest {
+
+    /** Starts every run from an empty schema: the test database persists between runs. */
+    @TestConfiguration
+    static class CleanDatabase {
+        @Bean
+        FlywayMigrationStrategy cleanThenMigrate() {
+            return flyway -> {
+                flyway.clean();
+                flyway.migrate();
+            };
+        }
+    }
 
     @Autowired KafkaTemplate<String, Object> kafkaTemplate;
     @Autowired StockRepository stocks;

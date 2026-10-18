@@ -9,7 +9,10 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -27,15 +30,26 @@ import static org.awaitility.Awaitility.await;
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
         "spring.kafka.properties.schema.registry.url=mock://it",
-        "spring.datasource.url=jdbc:h2:mem:notification;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
-        "spring.datasource.username=sa",
-        "spring.datasource.password="
+        "app.database=notification_test",
+        "spring.flyway.clean-disabled=false"
 })
 // Same topic names as kafka-init in docker-compose.yml; auto-creation is off so a naming mismatch fails.
 @EmbeddedKafka(partitions = 1, topics = {KafkaTopics.ORDERS_EVENTS, "orders.events-dlt",
         "orders.events-notification-retry", "orders.events-notification-dlt"},
         brokerProperties = "auto.create.topics.enable=false")
 class NotificationRetryTest {
+
+    /** Starts every run from an empty schema: the test database persists between runs. */
+    @TestConfiguration
+    static class CleanDatabase {
+        @Bean
+        FlywayMigrationStrategy cleanThenMigrate() {
+            return flyway -> {
+                flyway.clean();
+                flyway.migrate();
+            };
+        }
+    }
 
     @Autowired KafkaTemplate<String, Object> kafkaTemplate;
     @Autowired ProcessedEventRepository processedEvents;

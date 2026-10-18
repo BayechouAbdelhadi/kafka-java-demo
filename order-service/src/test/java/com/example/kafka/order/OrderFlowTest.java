@@ -12,7 +12,10 @@ import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
@@ -30,14 +33,25 @@ import static org.awaitility.Awaitility.await;
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=${spring.embedded.kafka.brokers}",
         "spring.kafka.properties.schema.registry.url=mock://it",
-        "spring.datasource.url=jdbc:h2:mem:order;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
+        "app.database=order_test",
+        "spring.flyway.clean-disabled=false",
         "app.outbox.poll-interval-ms=100"
 })
 @EmbeddedKafka(partitions = 1, topics = {KafkaTopics.ORDERS_EVENTS, KafkaTopics.INVENTORY_EVENTS, "inventory.events-dlt"},
         brokerProperties = "auto.create.topics.enable=false")
 class OrderFlowTest {
+
+    /** Starts every run from an empty schema: the test database persists between runs. */
+    @TestConfiguration
+    static class CleanDatabase {
+        @Bean
+        FlywayMigrationStrategy cleanThenMigrate() {
+            return flyway -> {
+                flyway.clean();
+                flyway.migrate();
+            };
+        }
+    }
 
     @Autowired OrderService orderService;
     @Autowired OutboxMessageRepository outbox;
