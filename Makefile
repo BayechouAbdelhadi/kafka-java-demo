@@ -1,24 +1,28 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
 INFRA   := kafka-1 kafka-2 kafka-3 kafka-4 schema-registry postgres kafka-ui
-APPS    := order-service inventory-service notification-service
 
-.PHONY: help infra up down logs build test demo
+.PHONY: help start infra up down logs build test demo ui
 
 help: ## List targets
 	@grep -E '^[a-z]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-6s %s\n", $$1, $$2}'
 
-infra: ## Start the infrastructure only (run the services from your IDE or mvn spring-boot:run)
+start: ## Start everything in one command: infrastructure, services, then the scenario UI
+	$(MAKE) up
+	$(MAKE) ui
+
+infra: ## Start the infrastructure only, in Docker (then run the services from your IDE)
 	$(COMPOSE) up -d --wait $(INFRA)
 
-up: ## Start the infrastructure and the three services in containers
-	$(COMPOSE) --profile apps up -d --build --wait $(INFRA) $(APPS)
+up: infra build ## Start the infrastructure, then the three services as local JVMs (logs in logs/)
+	./scripts/services.sh start
 
-down: ## Stop and remove everything (no volumes: state is reset)
-	$(COMPOSE) --profile apps down --remove-orphans
+down: ## Stop the services and remove the infrastructure (no volumes: state is reset)
+	./scripts/services.sh stop
+	$(COMPOSE) down --remove-orphans
 
 logs: ## Follow the services' logs
-	$(COMPOSE) --profile apps logs -f $(APPS)
+	tail -F logs/*.log
 
 build: ## Build all modules
 	mvn -B install -DskipTests
@@ -29,3 +33,6 @@ test: ## Run the test suite (embedded Kafka + the compose PostgreSQL, *_test dat
 
 demo: ## Run the end-to-end scenarios against running services
 	./scripts/demo.sh
+
+ui: ## Open the scenario UI on http://localhost:5173 (needs Node; services must be running)
+	cd scenario-ui && npm install --no-audit --no-fund && npm run dev

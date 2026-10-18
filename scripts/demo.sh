@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end scenarios against running services (`make up` or `make infra` + services). Needs curl and jq.
+# End-to-end scenarios against running services (`make up`, or `make infra` + services from your IDE). Needs curl and jq.
 set -euo pipefail
 
 ORDERS=${ORDERS_URL:-http://localhost:8080/api/orders}
@@ -40,4 +40,4 @@ order flaky_carol PROD-1 1 > /dev/null
 echo "4. Notification permanent failure: straight to orders.events-notification-dlt"
 order invalid_dave PROD-1 1 > /dev/null
 
-echo "Follow 3 and 4 with 'make logs' (notification-service) or in Kafka UI: http://localhost:8090"
+echo "Follow 3 and 4 with 'make logs' (logs/notification-service.log) or in Kafka UI: http://localhost:8090"

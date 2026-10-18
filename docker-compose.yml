@@ -1,11 +1,10 @@
 # Local platform. Use the Makefile (`make help`) rather than calling compose directly.
 #
-#   infrastructure (default)  4-node KRaft cluster (3 broker+controller, 1 broker), topic init,
-#                             Schema Registry, PostgreSQL (one database per service), Kafka UI
-#   --profile apps            the three Spring Boot services, built from ./Dockerfile
+# Infrastructure only: 4-node KRaft cluster (3 broker+controller, 1 broker), topic init, Schema Registry,
+# PostgreSQL (one database per service), Kafka UI. The services run as local JVMs (scripts/services.sh).
 #
-# Host ports: Kafka 9092/9094/9095/9096, Schema Registry 8081, PostgreSQL 5432, Kafka UI 8090,
-#             order 8080, inventory 8082, notification 8083. No volumes: `down` resets everything.
+# Host ports: Kafka 9092/9094/9095/9096, Schema Registry 8081, PostgreSQL 5432, Kafka UI 8090.
+# No volumes: `down` resets everything.
 
 x-kafka: &kafka
   image: apache/kafka:3.7.0
@@ -29,17 +28,6 @@ x-kafka-env: &kafka-env
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
   KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
   KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
-x-app: &app
-  profiles: [apps]
-  restart: unless-stopped
-  depends_on:
-    schema-registry: { condition: service_healthy }
-    postgres: { condition: service_healthy }
-  environment:
-    KAFKA_BOOTSTRAP_SERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
-    SCHEMA_REGISTRY_URL: http://schema-registry:8081
-    POSTGRES_HOST: postgres
 
 services:
   kafka-1:
@@ -147,20 +135,3 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
 
-  order-service:
-    <<: *app
-    build: { context: ., args: { MODULE: order-service } }
-    image: kafka-java/order-service
-    ports: ["8080:8080"]
-
-  inventory-service:
-    <<: *app
-    build: { context: ., args: { MODULE: inventory-service } }
-    image: kafka-java/inventory-service
-    ports: ["8082:8082"]
-
-  notification-service:
-    <<: *app
-    build: { context: ., args: { MODULE: notification-service } }
-    image: kafka-java/notification-service
-    ports: ["8083:8083"]

@@ -246,13 +246,29 @@ Poison pills (undeserializable messages) go straight to the DLT.
 
 ## Run
 
-Requires Docker, Java 21, Maven 3.9, `make`, `curl`, `jq`.
+Requires Docker (your user in the `docker` group), Java 21, Maven 3.9, `make`; `curl` and `jq` for `make demo`, Node 18+ for `make ui`.
+
+### Quick start
 
 ```bash
-make up     # everything in containers
+make start
+```
+
+This one command starts the infrastructure in Docker (Kafka, Schema Registry, PostgreSQL, Kafka UI), builds every module, starts the three services as local JVMs, waits until they are all healthy, then serves the scenario UI on http://localhost:5173. `Ctrl+C` stops the UI only; the services keep running until `make down`.
+
+Without the UI, `make up` does the same and returns; run `make demo` for the scenarios in the terminal.
+
+To run the services from your IDE instead, start only the infrastructure with `make infra`, then run each `*Application` class.
+
+### All targets
+
+```bash
+make start  # make up, then make ui
+make up     # infrastructure in Docker, services as local JVMs (logs in logs/)
 make demo   # end-to-end scenarios
+make ui     # scenario UI with each order's path through the services and topics: http://localhost:5173
 make logs
-make down   # reset everything
+make down   # stop the services and reset the infrastructure
 make test   # starts the compose PostgreSQL; tests use the *_test databases
 ```
 
@@ -265,6 +281,7 @@ make test   # starts the compose PostgreSQL; tests use the *_test databases
 
 | URL | |
 |---|---|
+| Scenario UI | http://localhost:5173 (`make ui`) |
 | Orders | http://localhost:8080/api/orders (`/outbox/pending`) |
 | Inventory | http://localhost:8082/api/inventory |
 | Kafka UI | http://localhost:8090 |
