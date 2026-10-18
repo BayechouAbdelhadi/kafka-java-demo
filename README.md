@@ -1,30 +1,12 @@
 # Kafka & Spring Boot — Event-Driven Order System
 
-3 Spring Boot microservices that talk **only through Kafka** (Avro + Schema Registry), each with **its own PostgreSQL database**, publishing through a **Transactional Outbox**.
+3 Spring Boot microservices that talk **only through Kafka**, each with **its own PostgreSQL database**.
 
 **Contents:** [What we are building](#what-we-are-building) · [Prerequisites](#prerequisites) · [Learning goals](#learning-goals) · [1. Saga](#1-saga) · [2. Outbox](#2-transactional-outbox) · [3. Retries & DLQ](#3-retries--dlq) · [4. Delivery semantics](#4-delivery-semantics) · [5. Idempotent producer](#5-idempotent-producer) · [6. Idempotent consumers](#6-idempotent-consumers) · [7. Schema Registry & Avro](#7-schema-registry--avro) · [Run](#run)
 
 ## What we are building
 
-An online shop's order flow: a customer places an order, the stock is reserved, the customer is notified.
-
-Three services, each owning its database, never call each other: they only exchange events through Kafka. The hard part is not sending messages, it is keeping **three databases consistent without a distributed transaction**, while any process, broker or network link can fail at any time. Each pattern below answers one of those failures.
-
-### Components
-
-| Component | Responsibility | Produces | Consumes |
-|---|---|---|---|
-| **order-service** | REST API; creates the order, starts the saga, sets the final status | `orders.events` | `inventory.events` |
-| **inventory-service** | Owns the stock; reserves all lines of an order or none | `inventory.events` | `orders.events` |
-| **notification-service** | Notifies the customer; shows non-blocking retries + DLT | retry / DLT topics | `orders.events` |
-| **avro-schemas** | `OrderEvent`, `InventoryResultEvent` contracts | | |
-| **common** | Outbox, idempotency, error handling, shared config | | |
-| **Kafka** ×4 | KRaft cluster (3 broker+controller, 1 broker), no ZooKeeper | | |
-| **Schema Registry** | Stores Avro schemas, `FORWARD_TRANSITIVE` | | |
-| **PostgreSQL** | One database per service | | |
-| **Kafka UI** | Browse topics, messages, groups | | |
-
-### Architecture
+An online shop's order flow: **place an order → reserve the stock → notify the customer.**
 
 ```mermaid
 flowchart LR
@@ -43,12 +25,26 @@ flowchart LR
     T1{{orders.events}}
     T2{{inventory.events}}
 
-    O -- "ORDER_CREATED (outbox)" --> T1
+    O -- ORDER_CREATED --> T1
     T1 --> I
     T1 --> N
-    I -- "RESERVED / FAILED (outbox)" --> T2
+    I -- "RESERVED / FAILED" --> T2
     T2 --> O
 ```
+
+### Components
+
+| Component | Responsibility | Produces | Consumes |
+|---|---|---|---|
+| **order-service** | REST API; creates the order, sets its final status | `orders.events` | `inventory.events` |
+| **inventory-service** | Owns the stock; reserves an order's lines | `inventory.events` | `orders.events` |
+| **notification-service** | Notifies the customer | | `orders.events` |
+| **avro-schemas** | Event contracts: `OrderEvent`, `InventoryResultEvent` | | |
+| **common** | Kafka and database code shared by the services | | |
+| **Kafka** ×4 | KRaft cluster (3 broker+controller, 1 broker), no ZooKeeper | | |
+| **Schema Registry** | Stores the event schemas | | |
+| **PostgreSQL** | One database per service | | |
+| **Kafka UI** | Browse topics, messages, groups | | |
 
 ### Order flow
 
@@ -62,16 +58,16 @@ sequenceDiagram
     participant N as notification-service
 
     C->>O: POST /api/orders
-    O->>O: tx: save order (CREATED) + outbox row
+    O->>O: save order (CREATED)
     O-->>C: 201 CREATED
-    O->>K: relay → orders.events
+    O->>K: ORDER_CREATED → orders.events
     par
         K->>I: ORDER_CREATED
-        I->>I: tx: reserve stock + outbox row
-        I->>K: relay → inventory.events
+        I->>I: reserve stock
+        I->>K: RESERVED / FAILED → inventory.events
     and
         K->>N: ORDER_CREATED
-        N->>N: send notification
+        N->>N: notify customer
     end
     K->>O: INVENTORY_RESERVED / FAILED
     O->>O: CONFIRMED / REJECTED
@@ -107,13 +103,6 @@ flowchart LR
 - **One consumer group per service** → each service gets every event.
 - **`acks=all` + `min.insync.replicas=2` + RF 3** → no loss if a broker dies.
 
-| Topic | From → To |
-|---|---|
-| `orders.events` | order → inventory, notification |
-| `inventory.events` | inventory → order |
-| `orders.events-dlt`, `inventory.events-dlt` | failed records (3 attempts) |
-| `orders.events-notification-retry` / `-dlt` | notification retries / dead letters |
-
 ### Databases
 
 ```mermaid
@@ -121,22 +110,17 @@ flowchart LR
     subgraph pg["PostgreSQL"]
         subgraph odb["order_db"]
             o1[orders] --- o2[order_items]
-            o3[outbox_messages]
         end
         subgraph idb["inventory_db"]
             i1[stocks]
-            i3[outbox_messages]
-            i4[processed_events]
         end
         subgraph ndb["notification_db"]
-            n4[processed_events]
+            n1["(no business data)"]
         end
     end
 ```
 
-- `outbox_messages` — events waiting to be published.
-- `processed_events` — event IDs already handled (dedup).
-- Schemas managed by Flyway (`V1` shared, `V2` per service).
+No service reads another's database. Schemas are managed by Flyway (`V1` shared, `V2` per service). The pattern tables (`outbox_messages`, `processed_events`) are introduced in their sections.
 
 ## Prerequisites
 
@@ -150,7 +134,7 @@ Kafka basics, assumed known:
 
 ## Learning goals
 
-Go beyond the basics: the patterns that make event-driven services reliable.
+Three databases must stay consistent **without a distributed transaction**, while any process, broker or network link can fail. Each pattern answers one failure:
 
 | # | Pattern | Problem it solves |
 |---|---|---|
@@ -164,32 +148,45 @@ Go beyond the basics: the patterns that make event-driven services reliable.
 
 ## 1. Saga
 
-A **saga** splits a business transaction into **local transactions, one per service**, chained by events. Each step commits on its own; there is no global rollback, so a failure is handled by a **compensating action** in a later step.
+**Technique:** a business transaction split into **local transactions, one per service**, chained by events. No global rollback: a failure is handled by a **compensating** step.
 
-Ours is a **choreography** saga: no coordinator, each service reacts to the previous event.
+```mermaid
+flowchart LR
+    T1["order-service<br/>tx 1: order CREATED"] -- ORDER_CREATED --> T2["inventory-service<br/>tx 2: reserve all lines or none"]
+    T2 -- INVENTORY_RESERVED --> T3["order-service<br/>tx 3: CONFIRMED ✅"]
+    T2 -- INVENTORY_FAILED --> T4["order-service<br/>tx 3: REJECTED<br/>(compensates tx 1)"]
+```
 
-| Step | Service | Local transaction | Emits |
-|---|---|---|---|
-| 1 | order | Save order `CREATED` | `ORDER_CREATED` |
-| 2 | inventory | Reserve every line, or none | `INVENTORY_RESERVED` / `INVENTORY_FAILED` |
-| 3 | order | `CONFIRMED` / `REJECTED` | — |
+**Why:** each service owns its database, so one ACID transaction across the three is impossible.
 
-- **Compensation**: `REJECTED` is the compensation of step 1. Inventory reserves all-or-nothing in one transaction, so there is nothing to undo. With a later step that can fail (e.g. payment), inventory would need a compensating `RELEASE_STOCK`.
-- **Eventual consistency**: between steps the order is visibly `CREATED`.
+- Nothing to undo in inventory: it reserves all-or-nothing in one transaction. A later failing step (e.g. payment) would need a compensating `RELEASE_STOCK`.
+- Eventual consistency: between steps the order is visibly `CREATED`.
 
-The other flavour is **orchestration**:
+**Two flavours.** Ours is **choreography**: each service reacts to events.
+
+```mermaid
+flowchart LR
+    c1[order] -- ORDER_CREATED --> c2[inventory] -- INVENTORY_RESERVED --> c3[order]
+```
+
+**Orchestration**: a coordinator sends commands and handles the replies.
+
+```mermaid
+flowchart LR
+    OR[saga orchestrator] -- "ReserveStock" --> s1[inventory]
+    s1 -- reply --> OR
+    OR -- "then ChargePayment" --> s2[payment]
+    s2 -- reply --> OR
+```
 
 | | Choreography (ours) | Orchestration |
 |---|---|---|
-| Who drives | Each service reacts to events | A central orchestrator sends commands, handles replies |
-| Where the flow lives | Spread across services | In one place |
+| Flow lives | Spread across services | In one place |
 | Fits | Few steps | Many steps, complex compensations |
 
 ## 2. Transactional outbox
 
-### Without an outbox
-
-The obvious code saves the order, then sends the event:
+**Problem:** saving the order and sending the event are two writes to **two systems**; nothing makes them atomic.
 
 ```java
 @Transactional
@@ -199,8 +196,6 @@ public Order createOrder(CreateOrderRequest request) {
     return order;
 }
 ```
-
-That's two writes to **two different systems**, and nothing makes them atomic. Whichever order you put them in, a crash between them breaks something:
 
 ```mermaid
 sequenceDiagram
@@ -227,11 +222,9 @@ sequenceDiagram
 | Retry the send in a loop | The process can still crash before retrying, and the retry state is lost with it |
 | Kafka transactions | They make Kafka atomic with Kafka, **not** with PostgreSQL |
 
-On top of that, the HTTP request becomes slow and fails whenever Kafka is down, even though the order itself could be saved.
+Also: the HTTP request becomes slow, and fails whenever Kafka is down.
 
-### How we solved it
-
-We don't send to Kafka in the request at all. The event is saved **as a row in the same database, in the same transaction** as the order, so there's only one system and the write is atomic. A background relay publishes it afterwards.
+**Technique:** write the event **as a row in the same database, in the same transaction** as the order (one system → atomic). A background relay publishes it afterwards.
 
 ```mermaid
 flowchart LR
@@ -241,9 +234,9 @@ flowchart LR
         E[INSERT outbox_messages]
     end
     tx --> DB[(DB)]
-    R["OutboxRelay<br/>every 500 ms"] -- "1. lock batch<br/>FOR UPDATE SKIP LOCKED" --> DB
-    R -- "2. send, wait acks" --> K{{Kafka}}
-    R -- "3. delete sent rows" --> DB
+    R["OutboxRelay<br/>every 500 ms"] -- "① lock batch<br/>FOR UPDATE SKIP LOCKED" --> DB
+    R -- "② send, wait acks" --> K{{Kafka}}
+    R -- "③ delete sent rows" --> DB
 ```
 
 ```mermaid
@@ -265,20 +258,32 @@ flowchart TD
 
 **Never lost, never phantom, maybe duplicated → consumers are idempotent.**
 
-Code: [OutboxWriter](common/src/main/java/com/example/kafka/common/outbox/OutboxWriter.java) (`MANDATORY`: must join the business transaction) · [OutboxRelay](common/src/main/java/com/example/kafka/common/outbox/OutboxRelay.java) (runs never overlap: each run first takes a PostgreSQL advisory lock, `pg_try_advisory_xact_lock`, and if another instance holds it the run is skipped). Watch it: stop Kafka, create orders, see `GET /api/orders/outbox/pending` fill up; restart Kafka and it drains.
+- `outbox_messages` (order_db, inventory_db): events waiting to be published.
+- [OutboxWriter](common/src/main/java/com/example/kafka/common/outbox/OutboxWriter.java): `MANDATORY`, must join the business transaction.
+- [OutboxRelay](common/src/main/java/com/example/kafka/common/outbox/OutboxRelay.java): runs never overlap; each run first takes a PostgreSQL advisory lock (`pg_try_advisory_xact_lock`) and is skipped if another instance holds it.
+- Watch it: stop Kafka, create orders, see `GET /api/orders/outbox/pending` fill up; restart Kafka and it drains.
 
 ## 3. Retries & DLQ
 
-A failed record is retried; if it keeps failing, it goes to a **dead-letter topic (DLT)** so it is kept for inspection and stops blocking. Two strategies:
+**Technique:** retry a failed record; if it keeps failing, park it on a **dead-letter topic (DLT)** for inspection.
 
-**Blocking** (order, inventory): the partition waits, so the order of events is preserved; required by the saga. 3 attempts, 1 s apart ([KafkaErrorHandlingConfig](common/src/main/java/com/example/kafka/common/kafka/KafkaErrorHandlingConfig.java)), then `<topic>-dlt`, same partition.
+**Why:** a failing record must neither be lost nor block the records behind it forever.
+
+```mermaid
+flowchart TD
+    F[Record fails] --> Q{Does the order of<br/>events matter?}
+    Q -- "yes: saga (order, inventory)" --> BL[Blocking retries<br/>partition waits]
+    Q -- "no: notification" --> NB[Non-blocking retries<br/>partition keeps flowing]
+```
+
+**Blocking** (order, inventory): 3 attempts, 1 s apart ([KafkaErrorHandlingConfig](common/src/main/java/com/example/kafka/common/kafka/KafkaErrorHandlingConfig.java)), then `<topic>-dlt`, same partition.
 
 ```mermaid
 flowchart LR
     M[Record] --> A1[try 1] -- fail --> A2[try 2] -- fail --> A3[try 3] -- fail --> DLT{{topic-dlt}}
 ```
 
-**Non-blocking** (notification): the failed record moves to a retry topic and the partition keeps flowing; order does not matter for notifications. 4 attempts, 2 s apart (`@RetryableTopic` in [NotificationConsumer](notification-service/src/main/java/com/example/kafka/notification/consumer/NotificationConsumer.java)). A permanent error skips the retries.
+**Non-blocking** (notification): 4 attempts, 2 s apart, through a retry topic (`@RetryableTopic` in [NotificationConsumer](notification-service/src/main/java/com/example/kafka/notification/consumer/NotificationConsumer.java)). A permanent error skips the retries.
 
 ```mermaid
 flowchart LR
@@ -287,10 +292,32 @@ flowchart LR
     L -- "4 fails / permanent" --> DLT{{notification-dlt}}
 ```
 
+| Topic | Holds |
+|---|---|
+| `orders.events-dlt`, `inventory.events-dlt` | Records that failed 3 blocking attempts |
+| `orders.events-notification-retry` | Notifications waiting for their next attempt |
+| `orders.events-notification-dlt` | Notifications that failed 4 times, or permanently |
+
 - **Poison pills** (records that cannot be deserialized) go straight to the DLT: retrying cannot fix them.
 - Demo: customer `flaky_*` fails twice then succeeds; `invalid_*` goes straight to the DLT.
 
 ## 4. Delivery semantics
+
+When does the consumer commit its offset, relative to processing? A crash in between decides the guarantee:
+
+**At most once**: commit, then process.
+
+```mermaid
+flowchart LR
+    a1[poll] --> a2[commit offset] --> a3["💥 crash"] --> a4["record skipped<br/>❌ LOST"]
+```
+
+**At least once** (ours): process, then commit.
+
+```mermaid
+flowchart LR
+    b1[poll] --> b2[process] --> b3["💥 crash"] --> b4["record redelivered<br/>⚠️ DUPLICATE"]
+```
 
 | Semantics | How | Risk |
 |---|---|---|
@@ -298,19 +325,35 @@ flowchart LR
 | **At least once** (ours) | Process, **then** commit the offset; producer retries until acked | Duplicates |
 | Exactly once | Kafka transactions (read-process-write) | Only covers Kafka → Kafka, not our PostgreSQL writes |
 
-Spring commits the offset after the listener returns, and the outbox relay deletes a row only once Kafka acked it. So nothing is lost, but **duplicates happen**:
+**Why at-least-once:** losing an order is not acceptable; a duplicate can be made harmless. Spring commits the offset after the listener returns, and the relay deletes a row only once Kafka acked it.
 
-- The relay sent a batch, then crashed before deleting the rows → the batch is sent again.
-- A consumer committed its DB transaction, then crashed before committing the offset → the record is redelivered.
-- A rebalance hands a partition over before its offset was committed → the new owner reprocesses it.
+Where duplicates come from here:
 
-**At-least-once + idempotent consumers = effectively once.**
+```mermaid
+flowchart LR
+    D1["Relay sent a batch,<br/>crashed before DELETE"] --> DUP[Same event<br/>delivered twice]
+    D2["Consumer committed its DB tx,<br/>crashed before the offset commit"] --> DUP
+    D3["Rebalance before<br/>the offset commit"] --> DUP
+    DUP --> IC["Idempotent consumer<br/>(section 6)"] --> EO[✅ Effectively once]
+```
 
 ## 5. Idempotent producer
 
-**Problem**: the broker writes a record but the ack is lost; the producer retries and the record is written twice. With several requests in flight, a retry can also reorder records.
+**Problem:** the broker writes a record, the ack is lost, the producer retries → the record is written twice.
 
-**Fix**: each producer gets an id and numbers its records per partition; the broker drops a sequence number it already has and rejects gaps.
+**Technique:** each producer gets an id and numbers its records per partition; the broker drops a sequence number it already has.
+
+```mermaid
+sequenceDiagram
+    participant P as Producer (id 42)
+    participant B as Broker
+    P->>B: record, seq 7
+    B->>B: write seq 7
+    B--xP: ack lost
+    P->>B: retry: record, seq 7
+    B->>B: seq 7 already written → drop
+    B-->>P: ack ✅ (one copy in the log)
+```
 
 | Config | Value | Here |
 |---|---|---|
@@ -320,11 +363,13 @@ Spring commits the offset after the listener returns, and the outbox relay delet
 | `max.in.flight.requests.per.connection` | `≤ 5` | Default `5`; order still kept |
 
 - If a conflicting setting is added (e.g. `acks=1`) and `enable.idempotence` is not set explicitly, idempotence is **silently disabled**; set to `true` explicitly, the producer fails at startup instead.
-- **Limit**: deduplication works within one producer session. After a restart the producer has a new id, so the relay re-sending a batch after a crash is **not** caught: that's the consumers' job. Across sessions, Kafka needs a `transactional.id`.
+- **Limit:** works within one producer session. After a restart the producer has a new id, so the relay re-sending a batch after a crash is **not** caught: that's the consumers' job. Across sessions, Kafka needs a `transactional.id`.
 
 ## 6. Idempotent consumers
 
-Processing the same event twice must have the same effect as processing it once.
+**Technique:** remember what was processed, and skip it the second time.
+
+**Why:** at-least-once delivers duplicates; processing an event twice must have the same effect as once.
 
 ```mermaid
 flowchart LR
@@ -339,12 +384,15 @@ flowchart LR
 | notification | `processed_events` | The send itself is outside the DB: a crash between send and commit can still notify twice |
 | order | State machine: only `CREATED` can change | A second result finds `CONFIRMED`/`REJECTED`: no-op |
 
+- `processed_events` (inventory_db, notification_db): event IDs already handled.
 - Dedupe on **`eventId`** (a UUID set when the event is created), not on the offset: a record re-sent by the relay gets a new offset.
 - The marker must be written **in the same transaction** as the effect; otherwise a crash leaves one without the other.
 
 ## 7. Schema Registry & Avro
 
-Services share **contracts**, not code: the Avro schemas in [avro-schemas](avro-schemas/src/main/avro) (`OrderEvent`, `InventoryResultEvent`), compiled to Java classes at build time.
+**Technique:** services share **contracts**, not code: Avro schemas in [avro-schemas](avro-schemas/src/main/avro) (`OrderEvent`, `InventoryResultEvent`), compiled to Java classes. Schema Registry stores them and checks every change.
+
+**Why:** compact records, and a producer cannot publish a change that would break existing consumers.
 
 ```mermaid
 sequenceDiagram
@@ -360,8 +408,27 @@ sequenceDiagram
     C->>C: decode to OrderEvent
 ```
 
-- **Avro**: compact binary; the schema travels as a 4-byte id, not with every record.
-- **Compatibility `FORWARD_TRANSITIVE`**: every new schema must be readable by consumers on **any** older version, so producers can upgrade first. Adding a field or removing one that has a default is allowed; removing a field without a default or changing a type incompatibly is rejected at registration.
+A record's value on the wire:
+
+```mermaid
+flowchart LR
+    m["magic byte<br/>0"] --- id["schema id<br/>4 bytes"] --- body["Avro binary<br/>no field names"]
+```
+
+**Compatibility `FORWARD_TRANSITIVE`:** consumers on **any** older schema can read the new one, so producers can upgrade first.
+
+```mermaid
+flowchart LR
+    P2["producer on v2"] --> K{{topic}} --> C1["consumer on v1 ✅"]
+    K --> C2["consumer on v2 ✅"]
+```
+
+| Change | Accepted? |
+|---|---|
+| Add a field | ✅ old consumers ignore it |
+| Remove a field that has a default | ✅ old consumers use the default |
+| Remove a field without a default, change a type incompatibly | ❌ rejected at registration |
+
 - Optional fields are unions with a default, e.g. `reason: ["null", "string"]`, default `null`.
 - A record that does not match its schema is a poison pill → DLT ([3](#3-retries--dlq)).
 
