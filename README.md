@@ -132,9 +132,51 @@ flowchart LR
 
 ## Transactional Outbox
 
-**Problem:** saving to the DB and sending to Kafka can't be atomic → crash in between = lost or phantom event.
+### Without an outbox
 
-**Solution:** save the event in the DB **in the same transaction**, publish it later.
+The obvious code saves the order, then sends the event:
+
+```java
+@Transactional
+public Order createOrder(CreateOrderRequest request) {
+    orderRepository.save(order);                       // write 1: PostgreSQL
+    kafkaTemplate.send("orders.events", id, event);    // write 2: Kafka
+    return order;
+}
+```
+
+That's two writes to **two different systems**, and nothing makes them atomic. Whichever order you put them in, a crash between them breaks something:
+
+```mermaid
+sequenceDiagram
+    participant S as order-service
+    participant DB as PostgreSQL
+    participant K as Kafka
+
+    Note over S,K: ❌ Option A: commit, then send
+    S->>DB: COMMIT order
+    S--xK: send fails (Kafka down / crash / timeout)
+    Note over DB,K: Order saved, event LOST<br/>→ stock never reserved, order stuck in CREATED forever
+
+    Note over S,K: ❌ Option B: send, then commit
+    S->>K: send ORDER_CREATED ✅
+    S--xDB: COMMIT fails (constraint / crash / DB down)
+    Note over DB,K: Event published for an order that DOESN'T EXIST<br/>→ stock reserved for a phantom order
+```
+
+| Approach | What goes wrong |
+|---|---|
+| Commit, then send | **Lost event**: the order exists but nobody hears about it |
+| Send, then commit | **Phantom event**: everyone hears about an order that was rolled back |
+| Send inside `@Transactional` | Same as B: the send happens before the commit, and Kafka can't be rolled back |
+| Retry the send in a loop | The process can still crash before retrying, and the retry state is lost with it |
+| Kafka transactions | They make Kafka atomic with Kafka, **not** with PostgreSQL |
+
+On top of that, the HTTP request becomes slow and fails whenever Kafka is down, even though the order itself could be saved.
+
+### How we solved it
+
+We don't send to Kafka in the request at all. The event is saved **as a row in the same database, in the same transaction** as the order, so there's only one system and the write is atomic. A background relay publishes it afterwards.
 
 ```mermaid
 flowchart LR
@@ -159,7 +201,16 @@ flowchart TD
     DUP --> IDEM[Consumer skips it by eventId]
 ```
 
-**Never lost, maybe duplicated → consumers are idempotent.**
+| | Without outbox | With outbox |
+|---|---|---|
+| Order saved, event lost | possible | ❌ impossible: same commit |
+| Event for a rolled-back order | possible | ❌ impossible: rolled back together |
+| Kafka down | request fails | ✅ request succeeds, event sent when Kafka is back |
+| Duplicates | possible | possible, harmless: consumers skip them by `eventId` |
+
+**Never lost, never phantom, maybe duplicated → consumers are idempotent.**
+
+Code: [OutboxWriter](common/src/main/java/com/example/kafka/common/outbox/OutboxWriter.java) (`MANDATORY`: must join the business transaction) · [OutboxRelay](common/src/main/java/com/example/kafka/common/outbox/OutboxRelay.java) (`SKIP LOCKED`: several instances can relay without sending a row twice). Watch it: stop Kafka, create orders, see `GET /api/orders/outbox/pending` fill up; restart Kafka and it drains.
 
 ## Idempotent consumers
 
