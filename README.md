@@ -356,15 +356,17 @@ sequenceDiagram
     B-->>P: ack ✅ (one copy in the log)
 ```
 
+All four are set explicitly in [common-defaults.yml](common/src/main/resources/common-defaults.yml), even where they match Kafka's defaults:
+
 | Config | Value | Here |
 |---|---|---|
 | `enable.idempotence` | `true` | Default since Kafka 3.0 |
-| `acks` | `all` (required) | Set in [common-defaults.yml](common/src/main/resources/common-defaults.yml) |
-| `retries` | `> 0` | Default `Integer.MAX_VALUE` |
-| `max.in.flight.requests.per.connection` | `≤ 5` | Default `5`; order still kept |
+| `acks` | `all` (required) | Default since Kafka 3.0 |
+| `retries` | `> 0` | `Integer.MAX_VALUE` (the default) |
+| `max.in.flight.requests.per.connection` | `≤ 5` | `5` (the default); order still kept |
 
-- If a conflicting setting is added (e.g. `acks=1`) and `enable.idempotence` is not set explicitly, idempotence is **silently disabled**; set to `true` explicitly, the producer fails at startup instead.
-- **Limit:** works within one producer session. After a restart the producer has a new id, so the relay re-sending a batch after a crash is **not** caught: that's the consumers' job. Across sessions, Kafka needs a `transactional.id`.
+- If a conflicting setting is added (e.g. `acks=1`) and `enable.idempotence` is not set explicitly, idempotence is **silently disabled**. Because it is set to `true` here, the producer fails at startup instead.
+- **Limit:** works within one producer session. After a restart the producer has a new id, so the relay re-sending a batch after a crash is **not** caught: that's the consumers' job.
 
 ## 6. Idempotent consumers
 

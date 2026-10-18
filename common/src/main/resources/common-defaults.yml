@@ -21,7 +21,14 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       # Avro, except raw bytes (poison pills forwarded to a DLT) which pass through untouched
       value-serializer: com.example.kafka.common.kafka.AvroOrBytesSerializer
-      acks: all # idempotence is on by default with acks=all
+      # Idempotent producer, set explicitly: a conflicting setting (e.g. acks=1) then fails at startup
+      # instead of silently disabling idempotence. Dedup holds within one producer session only:
+      # a relay re-send after a restart gets a new producer id, so consumers must stay idempotent.
+      acks: all # required by idempotence
+      retries: 2147483647 # must be > 0
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5 # must be <= 5; order is still kept
     consumer:
       group-id: ${spring.application.name}
       auto-offset-reset: earliest
