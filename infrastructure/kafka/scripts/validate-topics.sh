@@ -17,12 +17,15 @@ if command -v kafka-topics.sh &> /dev/null; then
 elif command -v kafka-topics &> /dev/null; then
     KAFKA_CLI="kafka-topics"
     CONFIGS_CLI="kafka-configs"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^kafka$"; then
+    KAFKA_CLI="docker exec -i kafka /opt/kafka/bin/kafka-topics.sh"
+    CONFIGS_CLI="docker exec -i kafka /opt/kafka/bin/kafka-configs.sh"
 elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "kafka-1"; then
-    KAFKA_CLI="docker exec -i kafka-1 kafka-topics"
-    CONFIGS_CLI="docker exec -i kafka-1 kafka-configs"
-elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "kafka"; then
-    KAFKA_CLI="docker exec -i kafka kafka-topics"
-    CONFIGS_CLI="docker exec -i kafka kafka-configs"
+    KAFKA_CLI="docker exec -i kafka-1 /opt/kafka/bin/kafka-topics.sh"
+    CONFIGS_CLI="docker exec -i kafka-1 /opt/kafka/bin/kafka-configs.sh"
+elif sudo -n docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^kafka$"; then
+    KAFKA_CLI="sudo docker exec -i kafka /opt/kafka/bin/kafka-topics.sh"
+    CONFIGS_CLI="sudo docker exec -i kafka /opt/kafka/bin/kafka-configs.sh"
 else
     echo "❌ [ERROR] Aucun outil kafka-topics (local ou conteneur Docker) n'a été trouvé."
     exit 1

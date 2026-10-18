@@ -39,10 +39,12 @@ if command -v kafka-topics.sh &> /dev/null; then
     KAFKA_CLI="kafka-topics.sh"
 elif command -v kafka-topics &> /dev/null; then
     KAFKA_CLI="kafka-topics"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^kafka$"; then
+    KAFKA_CLI="docker exec -i kafka /opt/kafka/bin/kafka-topics.sh"
 elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "kafka-1"; then
-    KAFKA_CLI="docker exec -i kafka-1 kafka-topics"
-elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "kafka"; then
-    KAFKA_CLI="docker exec -i kafka kafka-topics"
+    KAFKA_CLI="docker exec -i kafka-1 /opt/kafka/bin/kafka-topics.sh"
+elif sudo -n docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^kafka$"; then
+    KAFKA_CLI="sudo docker exec -i kafka /opt/kafka/bin/kafka-topics.sh"
 fi
 
 if [ -n "$KAFKA_CLI" ]; then

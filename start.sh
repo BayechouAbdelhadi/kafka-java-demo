@@ -2,25 +2,33 @@
 set -e
 
 echo "=========================================================="
-echo " 🚀 Démarrage Simple de l'Environnement Kafka & Services "
+echo " 🚀 Démarrage du Cluster Kafka 4 Brokers (KRaft) "
 echo "=========================================================="
 
-# 1. Démarrer Docker (Kafka, Schema Registry, PostgreSQL)
-if docker info >/dev/null 2>&1; then
-    docker compose up -d
-else
-    sudo docker compose up -d
+DOCKER_CMD="docker"
+if ! docker info >/dev/null 2>&1; then
+    DOCKER_CMD="sudo docker"
 fi
 
-echo "⏳ Attente de Kafka et Schema Registry..."
-sleep 5
+echo "🧹 Nettoyage et démarrage des 4 brokers, Schema Registry et PostgreSQL..."
+$DOCKER_CMD compose down --remove-orphans 2>/dev/null || true
+$DOCKER_CMD compose up -d
 
-# 2. Création automatique des topics indispensables
-docker exec -i kafka-1 kafka-topics --bootstrap-server localhost:9092 --create --if-not-exists --topic orders.events --partitions 3 --replication-factor 1 2>/dev/null || true
-docker exec -i kafka-1 kafka-topics --bootstrap-server localhost:9092 --create --if-not-exists --topic inventory.events --partitions 3 --replication-factor 1 2>/dev/null || true
-docker exec -i kafka-1 kafka-topics --bootstrap-server localhost:9092 --create --if-not-exists --topic orders.events-dlt --partitions 3 --replication-factor 1 2>/dev/null || true
+echo "⏳ Attente de la stabilisation du quorum KRaft (10 secondes)..."
+sleep 10
 
-echo "✅ Infrastructure prête !"
+# Création des topics avec Facteur de Réplication 3 (Multi-Brokers Réel)
+echo "📦 Création des topics avec réplication x3..."
+$DOCKER_CMD exec -i kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --if-not-exists --topic orders.events --partitions 3 --replication-factor 3 2>/dev/null || true
+
+$DOCKER_CMD exec -i kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --if-not-exists --topic inventory.events --partitions 3 --replication-factor 3 2>/dev/null || true
+
+$DOCKER_CMD exec -i kafka-1 /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+  --create --if-not-exists --topic orders.events-dlt --partitions 3 --replication-factor 3 2>/dev/null || true
+
+echo "✅ Cluster 4 Brokers opérationnel avec réplication x3 !"
 echo ""
-echo "Pour tester le scénario normal en une commande :"
+echo "Pour tester le scénario normal :"
 echo "   ./test-normal.sh"
