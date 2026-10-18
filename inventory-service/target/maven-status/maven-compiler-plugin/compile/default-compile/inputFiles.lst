@@ -1,5 +1,0 @@
-/home/abdelhadi/Documents/kafka-java/inventory-service/src/main/java/com/example/kafka/inventory/InventoryApplication.java
-/home/abdelhadi/Documents/kafka-java/inventory-service/src/main/java/com/example/kafka/inventory/consumer/OrderEventConsumer.java
-/home/abdelhadi/Documents/kafka-java/inventory-service/src/main/java/com/example/kafka/inventory/controller/InventoryController.java
-/home/abdelhadi/Documents/kafka-java/inventory-service/src/main/java/com/example/kafka/inventory/entity/Stock.java
-/home/abdelhadi/Documents/kafka-java/inventory-service/src/main/java/com/example/kafka/inventory/repository/StockRepository.java

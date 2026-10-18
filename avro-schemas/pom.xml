@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
-         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -12,9 +11,7 @@
     </parent>
 
     <artifactId>avro-schemas</artifactId>
-    <packaging>jar</packaging>
-
-    <name>Avro Schemas &amp; Generated Java Classes</name>
+    <description>Avro event contracts (src/main/avro) and their generated Java classes</description>
 
     <dependencies>
         <dependency>
@@ -35,11 +32,7 @@
                             <goal>schema</goal>
                         </goals>
                         <configuration>
-                            <sourceDirectory>${project.basedir}/src/main/avro/</sourceDirectory>
-                            <outputDirectory>${project.build.directory}/generated-sources/avro/</outputDirectory>
                             <stringType>String</stringType>
-                            <createSetters>true</createSetters>
-                            <enableDecimalLogicalType>true</enableDecimalLogicalType>
                         </configuration>
                     </execution>
                 </executions>

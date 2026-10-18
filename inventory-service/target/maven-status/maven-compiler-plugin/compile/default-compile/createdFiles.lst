@@ -1,5 +1,0 @@
-com/example/kafka/inventory/controller/InventoryController.class
-com/example/kafka/inventory/entity/Stock.class
-com/example/kafka/inventory/consumer/OrderEventConsumer.class
-com/example/kafka/inventory/repository/StockRepository.class
-com/example/kafka/inventory/InventoryApplication.class

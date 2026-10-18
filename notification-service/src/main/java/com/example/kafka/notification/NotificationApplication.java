@@ -5,9 +5,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
-@SpringBootApplication
-@EntityScan(basePackages = {"com.example.kafka.common.entity"})
-@EnableJpaRepositories(basePackages = {"com.example.kafka.common.repository"})
+/** Scans com.example.kafka so the shared outbox, idempotency and error-handling components are picked up. */
+@SpringBootApplication(scanBasePackages = "com.example.kafka")
+@EntityScan("com.example.kafka")
+@EnableJpaRepositories("com.example.kafka")
 public class NotificationApplication {
 
     public static void main(String[] args) {

@@ -1,16 +1,18 @@
 package com.example.kafka.common.repository;
 
 import com.example.kafka.common.entity.OutboxMessage;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
-@Repository
-public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, String> {
+public interface OutboxMessageRepository extends JpaRepository<OutboxMessage, Long> {
 
-    @Query("SELECT o FROM OutboxMessage o WHERE o.status = 'PENDING' ORDER BY o.createdAt ASC")
-    List<OutboxMessage> findPendingMessages(Pageable pageable);
+    /**
+     * Locks the oldest pending rows. SKIP LOCKED lets several service instances relay in parallel
+     * without publishing the same row twice.
+     */
+    @Query(value = "SELECT * FROM outbox_messages ORDER BY id LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<OutboxMessage> lockNextBatch(@Param("limit") int limit);
 }

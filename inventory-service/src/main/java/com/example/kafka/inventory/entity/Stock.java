@@ -19,44 +19,27 @@ public class Stock {
     @Column(name = "reserved_quantity", nullable = false)
     private int reservedQuantity;
 
-    public Stock() {}
+    protected Stock() {}
 
     public Stock(String productId, int availableQuantity) {
         this.productId = productId;
         this.availableQuantity = availableQuantity;
-        this.reservedQuantity = 0;
     }
 
-    public boolean reserve(int quantity) {
-        if (availableQuantity >= quantity) {
-            availableQuantity -= quantity;
-            reservedQuantity += quantity;
-            return true;
+    public boolean canReserve(int quantity) {
+        return availableQuantity >= quantity;
+    }
+
+    public void reserve(int quantity) {
+        if (!canReserve(quantity)) {
+            throw new IllegalStateException("Insufficient stock for " + productId);
         }
-        return false;
+        availableQuantity -= quantity;
+        reservedQuantity += quantity;
     }
 
-    public String getProductId() {
-        return productId;
-    }
-
-    public void setProductId(String productId) {
-        this.productId = productId;
-    }
-
-    public int getAvailableQuantity() {
-        return availableQuantity;
-    }
-
-    public void setAvailableQuantity(int availableQuantity) {
-        this.availableQuantity = availableQuantity;
-    }
-
-    public int getReservedQuantity() {
-        return reservedQuantity;
-    }
-
-    public void setReservedQuantity(int reservedQuantity) {
-        this.reservedQuantity = reservedQuantity;
-    }
+    public String getProductId() { return productId; }
+    public int getAvailableQuantity() { return availableQuantity; }
+    public void setAvailableQuantity(int availableQuantity) { this.availableQuantity = availableQuantity; }
+    public int getReservedQuantity() { return reservedQuantity; }
 }

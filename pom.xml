@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
-         https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -17,9 +16,6 @@
     <version>1.0.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Kafka Training Platform - Parent</name>
-    <description>Projet Kafka complet pour formation technique Java / Spring Boot</description>
-
     <modules>
         <module>avro-schemas</module>
         <module>common</module>
@@ -30,11 +26,6 @@
 
     <properties>
         <java.version>21</java.version>
-        <maven.compiler.release>21</maven.compiler.release>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        
-        <!-- Versions tierces -->
         <avro.version>1.12.0</avro.version>
         <confluent.version>7.7.1</confluent.version>
     </properties>
@@ -42,7 +33,6 @@
     <repositories>
         <repository>
             <id>confluent</id>
-            <name>Confluent Maven Repository</name>
             <url>https://packages.confluent.io/maven/</url>
             <snapshots>
                 <enabled>false</enabled>
@@ -50,20 +40,27 @@
         </repository>
     </repositories>
 
-    <pluginRepositories>
-        <pluginRepository>
-            <id>confluent</id>
-            <name>Confluent Maven Repository</name>
-            <url>https://packages.confluent.io/maven/</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </pluginRepository>
-    </pluginRepositories>
+    <!-- Test stack for every module: embedded Kafka + H2 (PostgreSQL mode) + mock:// Schema Registry -->
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
     <dependencyManagement>
         <dependencies>
-            <!-- Modules internes -->
             <dependency>
                 <groupId>com.example.kafka</groupId>
                 <artifactId>avro-schemas</artifactId>
@@ -74,33 +71,14 @@
                 <artifactId>common</artifactId>
                 <version>${project.version}</version>
             </dependency>
-
-            <!-- Apache Avro -->
             <dependency>
                 <groupId>org.apache.avro</groupId>
                 <artifactId>avro</artifactId>
                 <version>${avro.version}</version>
             </dependency>
-
-            <!-- Confluent Schema Registry & Avro Serializer -->
             <dependency>
                 <groupId>io.confluent</groupId>
                 <artifactId>kafka-avro-serializer</artifactId>
-                <version>${confluent.version}</version>
-                <exclusions>
-                    <exclusion>
-                        <groupId>org.slf4j</groupId>
-                        <artifactId>slf4j-log4j12</artifactId>
-                    </exclusion>
-                    <exclusion>
-                        <groupId>log4j</groupId>
-                        <artifactId>log4j</artifactId>
-                    </exclusion>
-                </exclusions>
-            </dependency>
-            <dependency>
-                <groupId>io.confluent</groupId>
-                <artifactId>kafka-schema-registry-client</artifactId>
                 <version>${confluent.version}</version>
             </dependency>
         </dependencies>

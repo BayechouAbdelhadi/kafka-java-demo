@@ -1,0 +1,38 @@
+# Shared defaults, pulled in by each service with `spring.config.import: classpath:common-defaults.yml`.
+# Imported values take precedence over the importing file: services set only the `app.*` keys,
+# spring.application.name and server.port, never the keys below.
+spring:
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${app.database}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:postgres}
+  flyway:
+    locations: classpath:db/common,classpath:db/migration # V1 shared tables, V2+ service tables
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9094,localhost:9095}
+    properties:
+      schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      acks: all # idempotence is on by default with acks=all
+    consumer:
+      group-id: ${spring.application.name}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Wraps Avro so a poison pill reaches the error handler (-> DLT) instead of looping in poll()
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: io.confluent.kafka.serializers.KafkaAvroDeserializer
+        specific.avro.reader: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

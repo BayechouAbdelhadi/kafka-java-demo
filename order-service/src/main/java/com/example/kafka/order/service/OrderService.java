@@ -1,24 +1,24 @@
 package com.example.kafka.order.service;
 
+import com.example.kafka.avro.InventoryResultEvent;
 import com.example.kafka.avro.OrderEvent;
 import com.example.kafka.avro.OrderItem;
 import com.example.kafka.common.constant.KafkaTopics;
-import com.example.kafka.common.entity.OutboxMessage;
-import com.example.kafka.common.repository.OutboxMessageRepository;
+import com.example.kafka.common.outbox.OutboxWriter;
 import com.example.kafka.order.dto.CreateOrderRequest;
 import com.example.kafka.order.entity.Order;
 import com.example.kafka.order.entity.OrderItemEntity;
 import com.example.kafka.order.repository.OrderRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
@@ -26,80 +26,48 @@ public class OrderService {
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     private final OrderRepository orderRepository;
-    private final OutboxMessageRepository outboxRepository;
-    private final ObjectMapper objectMapper;
+    private final OutboxWriter outbox;
 
-    public OrderService(OrderRepository orderRepository,
-                        OutboxMessageRepository outboxRepository,
-                        ObjectMapper objectMapper) {
+    public OrderService(OrderRepository orderRepository, OutboxWriter outbox) {
         this.orderRepository = orderRepository;
-        this.outboxRepository = outboxRepository;
-        this.objectMapper = objectMapper;
+        this.outbox = outbox;
     }
 
-    /**
-     * Crée une commande et insère l'événement dans la table Outbox au sein
-     * de la MÊME TRANSACTION LOCALE PostgreSQL (Transactional Outbox Pattern).
-     */
+    /** Saves the order and its ORDER_CREATED event in the same local transaction (transactional outbox). */
     @Transactional
     public Order createOrder(CreateOrderRequest request) {
-        double total = request.getItems().stream()
-                .mapToDouble(i -> i.getQuantity() * i.getUnitPrice())
-                .sum();
+        double total = request.items().stream().mapToDouble(i -> i.quantity() * i.unitPrice()).sum();
 
-        Order order = new Order(request.getCustomerId(), total);
-        for (CreateOrderRequest.ItemRequest itemReq : request.getItems()) {
-            order.addItem(new OrderItemEntity(itemReq.getProductId(), itemReq.getQuantity(), itemReq.getUnitPrice()));
-        }
+        Order order = new Order(request.customerId(), total);
+        request.items().forEach(i -> order.addItem(new OrderItemEntity(i.productId(), i.quantity(), i.unitPrice())));
+        orderRepository.save(order);
 
-        // 1. Sauvegarde locale de l'agrégat Order
-        Order savedOrder = orderRepository.save(order);
-        log.info("Commande {} enregistrée en base (statut: {})", savedOrder.getId(), savedOrder.getStatus());
-
-        // 2. Construction de l'événement de domaine Avro
-        String eventId = UUID.randomUUID().toString();
-        List<OrderItem> avroItems = savedOrder.getItems().stream()
+        List<OrderItem> items = order.getItems().stream()
                 .map(i -> new OrderItem(i.getProductId(), i.getQuantity(), i.getUnitPrice()))
-                .collect(Collectors.toList());
+                .toList();
 
         OrderEvent event = OrderEvent.newBuilder()
-                .setEventId(eventId)
+                .setEventId(UUID.randomUUID().toString())
                 .setEventType("ORDER_CREATED")
                 .setOccurredAt(Instant.now().toEpochMilli())
-                .setAggregateId(savedOrder.getId())
-                .setOrderId(savedOrder.getId())
-                .setCustomerId(savedOrder.getCustomerId())
-                .setTotalAmount(savedOrder.getTotalAmount())
-                .setStatus(savedOrder.getStatus().name())
-                .setItems(avroItems)
+                .setAggregateId(order.getId())
+                .setOrderId(order.getId())
+                .setCustomerId(order.getCustomerId())
+                .setTotalAmount(order.getTotalAmount())
+                .setStatus(order.getStatus().name())
+                .setItems(items)
                 .build();
 
-        // 3. Enregistrement dans la table outbox_messages au sein de la même transaction
-        try {
-            // Sérialisation JSON pour stockage temporaire dans l'outbox
-            String payloadJson = objectMapper.writeValueAsString(event);
-            OutboxMessage outbox = new OutboxMessage(
-                    "Order",
-                    savedOrder.getId(),
-                    "ORDER_CREATED",
-                    KafkaTopics.ORDERS_EVENTS,
-                    savedOrder.getId(), // Clé de partitionnement : orderId
-                    payloadJson
-            );
-            outboxRepository.save(outbox);
-            log.info("Événement Outbox {} créé atomiquement pour la commande {}", outbox.getId(), savedOrder.getId());
-        } catch (Exception e) {
-            log.error("Erreur lors de la sérialisation de l'événement Outbox", e);
-            throw new RuntimeException("Échec d'enregistrement de l'outbox", e);
-        }
-
-        return savedOrder;
+        // Key = orderId: every event of an order lands on the same partition, in order.
+        outbox.enqueue(KafkaTopics.ORDERS_EVENTS, order.getId(), event);
+        log.info("Order {} created", order.getId());
+        return order;
     }
 
     @Transactional(readOnly = true)
     public Order getOrder(String id) {
         return orderRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Commande introuvable: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found: " + id));
     }
 
     @Transactional(readOnly = true)
@@ -107,12 +75,20 @@ public class OrderService {
         return orderRepository.findAll();
     }
 
+    /**
+     * Saga step: confirm or reject the order. Idempotent through the state machine —
+     * only a CREATED order can transition, so a redelivered result is a no-op.
+     */
     @Transactional
-    public void updateOrderStatus(String orderId, Order.OrderStatus newStatus) {
-        orderRepository.findById(orderId).ifPresent(order -> {
-            order.setStatus(newStatus);
-            orderRepository.save(order);
-            log.info("Statut de la commande {} mis à jour : {}", orderId, newStatus);
-        });
+    public void applyInventoryResult(InventoryResultEvent result) {
+        orderRepository.findById(result.getOrderId()).ifPresentOrElse(order -> {
+            if (order.getStatus() != Order.OrderStatus.CREATED) {
+                log.info("Order {} already {}, ignoring {}", order.getId(), order.getStatus(), result.getEventType());
+                return;
+            }
+            order.setStatus(result.getSuccess() ? Order.OrderStatus.CONFIRMED : Order.OrderStatus.REJECTED);
+            log.info("Order {} -> {}{}", order.getId(), order.getStatus(),
+                    result.getReason() == null ? "" : " (" + result.getReason() + ")");
+        }, () -> log.warn("Inventory result for unknown order {}", result.getOrderId()));
     }
 }

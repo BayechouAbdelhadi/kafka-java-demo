@@ -1,6 +1,0 @@
-com/example/kafka/common/entity/OutboxMessage.class
-com/example/kafka/common/entity/OutboxMessage$Status.class
-com/example/kafka/common/constant/KafkaTopics.class
-com/example/kafka/common/repository/OutboxMessageRepository.class
-com/example/kafka/common/repository/ProcessedEventRepository.class
-com/example/kafka/common/entity/ProcessedEvent.class

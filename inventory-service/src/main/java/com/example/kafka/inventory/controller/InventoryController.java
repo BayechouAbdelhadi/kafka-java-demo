@@ -23,23 +23,20 @@ public class InventoryController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Stock>> getAllStock() {
-        return ResponseEntity.ok(stockRepository.findAll());
+    public List<Stock> getAllStock() {
+        return stockRepository.findAll();
     }
 
     @GetMapping("/{productId}")
     public ResponseEntity<Stock> getStock(@PathVariable String productId) {
-        return stockRepository.findById(productId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.of(stockRepository.findById(productId));
     }
 
+    /** Creates the product or resets its available quantity. */
     @PostMapping("/{productId}/init")
-    public ResponseEntity<Stock> initStock(@PathVariable String productId,
-                                           @RequestParam(defaultValue = "100") int quantity) {
-        Stock stock = stockRepository.findById(productId)
-                .orElse(new Stock(productId, quantity));
+    public Stock initStock(@PathVariable String productId, @RequestParam(defaultValue = "100") int quantity) {
+        Stock stock = stockRepository.findById(productId).orElseGet(() -> new Stock(productId, quantity));
         stock.setAvailableQuantity(quantity);
-        return ResponseEntity.ok(stockRepository.save(stock));
+        return stockRepository.save(stock);
     }
 }
