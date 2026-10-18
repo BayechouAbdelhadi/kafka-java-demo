@@ -280,7 +280,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    M[Record] --> A1[try 1] -- fail --> A2[try 2] -- fail --> A3[try 3] -- fail --> DLT{{topic-dlt}}
+    M[Record] --> A1[try 1] -- fail --> A2[try 2] -- fail --> A3[try 3] -- fail --> DLT{{topic-dlt}} -- acked --> C[commit offset,<br/>next record]
 ```
 
 **Non-blocking** (notification): 4 attempts, 2 s apart, through a retry topic (`@RetryableTopic` in [NotificationConsumer](notification-service/src/main/java/com/example/kafka/notification/consumer/NotificationConsumer.java)). A permanent error skips the retries.
@@ -289,7 +289,7 @@ flowchart LR
 flowchart LR
     M{{orders.events}} --> L[try]
     L -- transient --> R{{retry topic<br/>2 s}} --> L
-    L -- "4 fails / permanent" --> DLT{{notification-dlt}}
+    L -- "4 fails / permanent" --> DLT{{notification-dlt}} -- acked --> C[commit offset]
 ```
 
 | Topic | Holds |
@@ -298,7 +298,8 @@ flowchart LR
 | `orders.events-notification-retry` | Notifications waiting for their next attempt |
 | `orders.events-notification-dlt` | Notifications that failed 4 times, or permanently |
 
-- **Poison pills** (records that cannot be deserialized) go straight to the DLT: retrying cannot fix them.
+- **Retries exhausted → DLT → commit**: once the DLT acknowledged the record, its offset is committed and the partition moves on. If the DLT publication itself fails, nothing is committed and the record is retried: never dropped.
+- **Poison pills** (records that cannot be deserialized) go straight to the DLT, as their original bytes ([AvroOrBytesSerializer](common/src/main/java/com/example/kafka/common/kafka/AvroOrBytesSerializer.java)): retrying cannot fix them, and Avro-encoding them would register a `bytes` schema that then rejects every real record on that DLT.
 - Demo: customer `flaky_*` fails twice then succeeds; `invalid_*` goes straight to the DLT.
 
 ## 4. Delivery semantics

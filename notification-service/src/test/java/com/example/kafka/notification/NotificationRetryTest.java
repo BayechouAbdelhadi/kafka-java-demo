@@ -5,8 +5,14 @@ import com.example.kafka.common.constant.KafkaTopics;
 import com.example.kafka.common.repository.ProcessedEventRepository;
 import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
+import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
@@ -14,12 +20,15 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,6 +47,8 @@ import static org.awaitility.Awaitility.await;
         "orders.events-notification-retry", "orders.events-notification-dlt"},
         brokerProperties = "auto.create.topics.enable=false")
 class NotificationRetryTest {
+
+    private static final String DLT = "orders.events-notification-dlt";
 
     /** Starts every run from an empty schema: the test database persists between runs. */
     @TestConfiguration
@@ -66,21 +77,54 @@ class NotificationRetryTest {
 
     @Test
     void permanentFailureGoesStraightToDlt() {
-        Map<String, Object> props = KafkaTestUtils.consumerProps("it-dlt", "true", broker);
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-        props.put("schema.registry.url", "mock://it");
-        props.put("specific.avro.reader", true);
-        try (Consumer<String, Object> dlt = new DefaultKafkaConsumerFactory<>(props, new StringDeserializer(),
-                new KafkaAvroDeserializer()).createConsumer()) {
-            broker.consumeFromAnEmbeddedTopic(dlt, "orders.events-notification-dlt");
-
+        Map<String, Object> props = Map.of("schema.registry.url", "mock://it", "specific.avro.reader", true);
+        try (Consumer<String, Object> dlt = dltConsumer("it-dlt", new KafkaAvroDeserializer(), props)) {
             OrderEvent event = order("invalid_eve");
             kafkaTemplate.send(KafkaTopics.ORDERS_EVENTS, event.getOrderId(), event);
 
-            var record = KafkaTestUtils.getSingleRecord(dlt, "orders.events-notification-dlt", Duration.ofSeconds(20));
+            var record = KafkaTestUtils.getSingleRecord(dlt, DLT, Duration.ofSeconds(20));
             assertThat(((OrderEvent) record.value()).getEventId()).isEqualTo(event.getEventId());
             assertThat(processedEvents.existsById(event.getEventId())).isFalse();
         }
+    }
+
+    /**
+     * Regression: a poison pill dead-lettered first used to register a "bytes" schema on the DLT subject,
+     * after which every OrderEvent was rejected by the registry and the partition blocked forever.
+     */
+    @Test
+    void poisonPillThenPermanentFailureBothReachDlt() {
+        byte[] pill = "this is not avro".getBytes(StandardCharsets.UTF_8);
+        try (Consumer<String, byte[]> dlt = dltConsumer("it-dlt-pill", new ByteArrayDeserializer(), Map.of());
+             Producer<String, byte[]> raw = new DefaultKafkaProducerFactory<>(KafkaTestUtils.producerProps(broker),
+                     new StringSerializer(), new ByteArraySerializer()).createProducer()) {
+            raw.send(new ProducerRecord<>(KafkaTopics.ORDERS_EVENTS, "poison", pill));
+            raw.flush();
+            OrderEvent event = order("invalid_frank");
+            kafkaTemplate.send(KafkaTopics.ORDERS_EVENTS, event.getOrderId(), event);
+
+            List<ConsumerRecord<String, byte[]>> received = new ArrayList<>();
+            await().atMost(Duration.ofSeconds(30)).until(() -> {
+                KafkaTestUtils.getRecords(dlt, Duration.ofMillis(500)).forEach(received::add);
+                return received.size() >= 2;
+            });
+
+            assertThat(received.get(0).value()).as("pill forwarded as its original bytes").isEqualTo(pill);
+            assertThat(received.get(1).key()).isEqualTo(event.getOrderId());
+            assertThat(received.get(1).value()[0]).as("Avro magic byte").isZero();
+        }
+    }
+
+    /** A consumer of the notification DLT positioned at its current end, so it sees only this test's records. */
+    private <V> Consumer<String, V> dltConsumer(String group, Deserializer<V> values, Map<String, Object> extra) {
+        Map<String, Object> props = KafkaTestUtils.consumerProps(group, "false", broker);
+        props.putAll(extra);
+        Consumer<String, V> consumer = new DefaultKafkaConsumerFactory<>(props, new StringDeserializer(), values)
+                .createConsumer();
+        broker.consumeFromAnEmbeddedTopic(consumer, DLT);
+        consumer.seekToEnd(consumer.assignment());
+        consumer.assignment().forEach(consumer::position); // resolve the end now, before anything is sent
+        return consumer;
     }
 
     private static OrderEvent order(String customerId) {

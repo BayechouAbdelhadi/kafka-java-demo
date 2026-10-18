@@ -19,7 +19,8 @@ spring:
       schema.registry.url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: io.confluent.kafka.serializers.KafkaAvroSerializer
+      # Avro, except raw bytes (poison pills forwarded to a DLT) which pass through untouched
+      value-serializer: com.example.kafka.common.kafka.AvroOrBytesSerializer
       acks: all # idempotence is on by default with acks=all
     consumer:
       group-id: ${spring.application.name}
